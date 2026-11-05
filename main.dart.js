@@ -94892,15 +94892,16 @@ case 6:case 1:return B.D(q,r)
 case 2:return B.C(o.at(-1),r)}})
 return B.E($async$zd,r)},
 uY(a){return this.adk(a)},
-adk(a){var s=0,r=B.F(t.H),q,p=this,o,n
+adk(a){var s=0,r=B.F(t.H),q,p=this,o,n,m
 var $async$uY=B.G(function(b,c){if(b===1)return B.C(c,r)
-for(;;)switch(s){case 0:n=p.gv2()
-if(n.length===0){p.c.ag(t.Pu).f.lS(A.aIt)
+for(;;)switch(s){case 0:m=p.gv2()
+if(m.length===0){p.c.ag(t.Pu).f.lS(A.aIt)
 s=1
 break}o=p.y
 if(o==null)o="Gesamtes Lager"
+n=a?"Lagerbestand":"Lager_Export"
 s=3
-return B.w(B.aL9("Bestellliste_"+B.fH(o," ","_")+".pdf",new B.aqQ(n)),$async$uY)
+return B.w(B.aL9(n+"_"+B.fH(o," ","_")+".pdf",new B.aqQ(m)),$async$uY)
 case 3:s=1
 break
 case 1:return B.D(q,r)}})
