@@ -10,7 +10,6 @@ import 'package:flutter_email_sender/flutter_email_sender.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:printing/printing.dart';
 import 'package:flutter/foundation.dart';
-// Falls noch nicht vorhanden, wird für den Web-Download Universal HTML benötigt (oder ein kleiner Trick via printing)
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -664,7 +663,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Lagerverwaltung'),
+        title: const Text('Lager'),
         actions: [
           IconButton(
             icon: const Icon(Icons.print),
@@ -718,7 +717,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                       Image.asset('assets/logo.png', height: 55),
                       const SizedBox(width: 12),
                       const Text(
-                        'Lagerverwaltung',
+                        'Lager',
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
