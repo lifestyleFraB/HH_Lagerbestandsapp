@@ -10,6 +10,7 @@ import 'package:flutter_email_sender/flutter_email_sender.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:printing/printing.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:excel/excel.dart' as excel_lib;
 import 'package:universal_html/html.dart' as html;
 
@@ -316,6 +317,10 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
       });
 
       String lagerTitel = _ausgewaehlterLagerort ?? 'Gesamtes Lager';
+      final logoBytes = (await rootBundle.load(
+        'assets/logo.png',
+      )).buffer.asUint8List();
+      final logo = pw.MemoryImage(logoBytes);
       final pdf = pw.Document();
 
       pdf.addPage(
@@ -330,6 +335,13 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
               children: [
                 pw.Row(
                   children: [
+                    pw.Image(
+                      logo,
+                      width: 100,
+                      height: 40,
+                      fit: pw.BoxFit.contain,
+                    ),
+                    pw.SizedBox(width: 8),
                     pw.Text(
                       'Lagerbestand',
                       style: pw.TextStyle(
@@ -537,6 +549,10 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
 
       if (isPdf) {
         // PDF Export für Mobil
+        final logoBytes = (await rootBundle.load(
+          'assets/logo.png',
+        )).buffer.asUint8List();
+        final logo = pw.MemoryImage(logoBytes);
         final pdf = pw.Document();
         pdf.addPage(
           pw.MultiPage(
@@ -548,12 +564,23 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                 child: pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    pw.Text(
-                      'Lagerbestand - $lagerTitel',
-                      style: pw.TextStyle(
-                        fontSize: 16,
-                        fontWeight: pw.FontWeight.bold,
-                      ),
+                    pw.Row(
+                      children: [
+                        pw.Image(
+                          logo,
+                          width: 100,
+                          height: 40,
+                          fit: pw.BoxFit.contain,
+                        ),
+                        pw.SizedBox(width: 8),
+                        pw.Text(
+                          'Lagerbestand - $lagerTitel',
+                          style: pw.TextStyle(
+                            fontSize: 16,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                        ),
+                      ],
                     ),
                     pw.Text(
                       'Datum: ${DateTime.now().toLocal().toString().substring(0, 10)}',
@@ -705,20 +732,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.asset(
-              'assets/logo.png',
-              height: 36,
-              width: 90,
-              fit: BoxFit.contain,
-              semanticLabel: 'Firmenlogo Hagemann & Henrichsmann',
-            ),
-            const SizedBox(width: 8),
-            const Text('Lagerbestand'),
-          ],
-        ),
+        title: const Text('Lagerbestand'),
         actions: [
           IconButton(
             icon: const Icon(Icons.print),
@@ -763,6 +777,29 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16.0,
+                    vertical: 12.0,
+                  ),
+                  color: const Color(0xFFD3D3D3),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Image.asset('assets/logo.png', height: 55),
+                      const SizedBox(width: 12),
+                      const Text(
+                        'Lagerbestand',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
                 Padding(
                   padding: const EdgeInsets.all(12.0),
                   child: Column(
