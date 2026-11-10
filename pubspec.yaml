@@ -40,6 +40,7 @@ dependencies:
   printing: ^5.13.4  # <-- Hier auf Version 5.13.4 (oder neuer) aktualisieren
   universal_html: ^2.2.4
   url_launcher: ^6.2.0
+  excel: ^4.0.6
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

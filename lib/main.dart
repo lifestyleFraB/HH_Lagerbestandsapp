@@ -10,6 +10,7 @@ import 'package:flutter_email_sender/flutter_email_sender.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:printing/printing.dart';
 import 'package:flutter/foundation.dart';
+import 'package:excel/excel.dart' as excel_lib;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -38,6 +39,7 @@ class LagerApp extends StatelessWidget {
   }
 }
 
+// --- HIER FEHLTE DIESER BLOCK: ---
 class ArtikelUebersichtPage extends StatefulWidget {
   const ArtikelUebersichtPage({super.key});
 
@@ -48,12 +50,41 @@ class ArtikelUebersichtPage extends StatefulWidget {
 class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
   var _artikelList = [];
   var _lagerorteList = [];
+  List<String> _zuliefererList = [];
   bool _isLoading = true;
   bool _nurKritischeZeigen = false;
   String _searchQuery = '';
   String _einkaufEmail = 'frank.berndt@protonmail.com';
   String? _ausgewaehlterLagerort;
+  String? _ausgewaehlterZulieferer;
 
+  // --- HIER DEN GETTER EINFÜGEN ---
+  List get _gefilterteArtikel {
+    return _artikelList.where((artikel) {
+      final title = artikel['title']?.toString().toLowerCase() ?? '';
+      final matchesSearch = title.contains(_searchQuery.toLowerCase());
+
+      final matchesLagerort =
+          _ausgewaehlterLagerort == null ||
+          artikel['lagerorte']?['name'] == _ausgewaehlterLagerort;
+
+      final matchesZulieferer =
+          _ausgewaehlterZulieferer == null ||
+          artikel['zulieferer'] == _ausgewaehlterZulieferer;
+
+      final int bestand = artikel['bestand'] ?? 0;
+      final int mindestbestand = artikel['mindestbestand'] ?? 0;
+      final matchesKritisch =
+          !_nurKritischeZeigen || (bestand <= mindestbestand);
+
+      return matchesSearch &&
+          matchesLagerort &&
+          matchesZulieferer &&
+          matchesKritisch;
+    }).toList();
+  }
+
+  // ---------------------------------
   @override
   void initState() {
     super.initState();
@@ -88,9 +119,18 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
           .select('*, lagerorte(name)')
           .order('title');
 
+      final Set<String> zuliefererSet = {};
+      for (var item in artikelData) {
+        if (item['zulieferer'] != null &&
+            item['zulieferer'].toString().trim().isNotEmpty) {
+          zuliefererSet.add(item['zulieferer'].toString().trim());
+        }
+      }
+
       setState(() {
         _lagerorteList = List.from(lagerorteData);
         _artikelList = List.from(artikelData);
+        _zuliefererList = zuliefererSet.toList()..sort();
         _isLoading = false;
       });
     } catch (e) {
@@ -101,41 +141,6 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
       }
       setState(() => _isLoading = false);
     }
-  }
-
-  List get _gefilterteArtikel {
-    return _artikelList.where((artikel) {
-      final title = (artikel['title'] ?? artikel['name'] ?? '')
-          .toString()
-          .toLowerCase();
-      final matchesSearch = title.contains(_searchQuery.toLowerCase());
-
-      final int bestand = artikel['bestand'] ?? 0;
-      final int mindestbestand = artikel['mindestbestand'] ?? 0;
-      final bool istKritisch = bestand <= mindestbestand;
-
-      bool matchesLagerort = true;
-      if (_ausgewaehlterLagerort != null) {
-        final passenderOrt = _lagerorteList.firstWhere(
-          (ort) =>
-              (ort is Map && ort['name']?.toString() == _ausgewaehlterLagerort),
-          orElse: () => null,
-        );
-        final gefundeneId = passenderOrt != null ? passenderOrt['id'] : null;
-
-        final artikelLagerortId =
-            artikel['lagerort_ID'] ?? artikel['lagerort_id'];
-        matchesLagerort =
-            (gefundeneId != null &&
-            artikelLagerortId != null &&
-            artikelLagerortId.toString() == gefundeneId.toString());
-      }
-
-      if (_nurKritischeZeigen) {
-        return matchesSearch && istKritisch && matchesLagerort;
-      }
-      return matchesSearch && matchesLagerort;
-    }).toList();
   }
 
   Future<void> _changeBestand(
@@ -171,6 +176,50 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Fehler beim Buchen: $e')));
+      }
+    }
+  }
+
+  Future<void> _loescheArtikel(Map<String, dynamic> artikel) async {
+    final bool? bestatigt = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Artikel löschen'),
+        content: Text(
+          'Möchten Sie den Artikel "${artikel['title']}" wirklich unwiderruflich löschen?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Abbrechen'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+
+    if (bestatigt == true) {
+      try {
+        await supabase.from('artikel').delete().eq('id', artikel['id']);
+        _loadData();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Artikel erfolgreich gelöscht.')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Fehler beim Löschen: $e')));
+        }
       }
     }
   }
@@ -245,7 +294,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
     );
   }
 
-  // --- PDF / LAGERÜBERSICHT ALS DIREKT-DOWNLOAD (100% Web-sicher) ---
+  // --- PDF-DRUCK / EXPORT (A4 Querformat, volle Länge, 2pt kleiner, A-Z absteigend) ---
   Future<void> _druckeLagerUebersicht() async {
     try {
       final listToExport = _gefilterteArtikel;
@@ -258,34 +307,42 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
         return;
       }
 
+      // Sortierung: Von A bis Z absteigend (Z bis A) nach Titel
+      listToExport.sort((a, b) {
+        final titleA = (a['title'] ?? '').toString().toLowerCase();
+        final titleB = (b['title'] ?? '').toString().toLowerCase();
+        return titleB.compareTo(titleA); // absteigend
+      });
+
       String lagerTitel = _ausgewaehlterLagerort ?? 'Gesamtes Lager';
       final pdf = pw.Document();
 
       pdf.addPage(
         pw.MultiPage(
           pageFormat: PdfPageFormat.a4.landscape,
-          margin: const pw.EdgeInsets.all(32),
+          // Minimale Ränder für volle Ausnutzung der DIN A4 Länge/Breite
+          margin: const pw.EdgeInsets.symmetric(horizontal: 20, vertical: 20),
           build: (context) => [
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               crossAxisAlignment: pw.CrossAxisAlignment.center,
               children: [
-                pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                pw.Row(
                   children: [
                     pw.Text(
-                      'Lagerübersicht',
+                      'Lagerbestand',
                       style: pw.TextStyle(
-                        fontSize: 18,
+                        fontSize: 16, // 2pt kleiner
                         fontWeight: pw.FontWeight.bold,
                       ),
                     ),
-                    pw.SizedBox(height: 2),
+                    pw.SizedBox(width: 8),
                     pw.Text(
-                      'Bereich: $lagerTitel',
-                      style: const pw.TextStyle(
-                        fontSize: 12,
-                        color: PdfColors.grey700,
+                      '- $lagerTitel',
+                      style: pw.TextStyle(
+                        fontSize: 16, // Genauso groß direkt daneben
+                        fontWeight: pw.FontWeight.bold,
+                        color: PdfColors.blue800,
                       ),
                     ),
                   ],
@@ -293,33 +350,36 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                 pw.Text(
                   'Datum: ${DateTime.now().toLocal().toString().substring(0, 10)}',
                   style: const pw.TextStyle(
-                    fontSize: 10,
+                    fontSize: 9, // 2pt kleiner
                     color: PdfColors.grey700,
                   ),
                 ),
               ],
             ),
-            pw.SizedBox(height: 15),
+            pw.SizedBox(height: 10),
             pw.Divider(thickness: 1, color: PdfColors.blue800),
-            pw.SizedBox(height: 15),
+            pw.SizedBox(height: 10),
             pw.Table.fromTextArray(
               headerStyle: pw.TextStyle(
                 fontWeight: pw.FontWeight.bold,
                 color: PdfColors.white,
-                fontSize: 11,
+                fontSize: 9, // 2pt kleiner als zuvor (11)
               ),
-              cellStyle: const pw.TextStyle(fontSize: 11),
+              cellStyle: const pw.TextStyle(
+                fontSize: 9,
+              ), // 2pt kleiner als zuvor (11)
               headerDecoration: const pw.BoxDecoration(
                 color: PdfColors.blue800,
               ),
               columnWidths: {
                 0: const pw.FlexColumnWidth(3.0),
                 1: const pw.FixedColumnWidth(70),
-                2: const pw.FixedColumnWidth(90),
-                3: const pw.FixedColumnWidth(80),
-                4: const pw.FixedColumnWidth(60),
+                2: const pw.FixedColumnWidth(80),
+                3: const pw.FixedColumnWidth(70),
+                4: const pw.FixedColumnWidth(50),
                 5: const pw.FlexColumnWidth(2.0),
-                6: const pw.FixedColumnWidth(70),
+                6: const pw.FlexColumnWidth(2.0),
+                7: const pw.FixedColumnWidth(70),
               },
               headers: [
                 'Artikel',
@@ -328,6 +388,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                 'Gesamt',
                 'Min',
                 'Lagerort',
+                'Zulieferer',
                 'Status',
               ],
               data: listToExport.map((item) {
@@ -342,7 +403,8 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                   gesamt.toString(),
                   m.toString(),
                   item['lagerorte']?['name'] ?? '-',
-                  pakete <= m ? 'KRITISCH' : 'OK',
+                  item['zulieferer'] ?? '-',
+                  pakete <= m ? 'NACHBESTELLEN' : 'OK',
                 ];
               }).toList(),
             ),
@@ -354,19 +416,17 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
       final fileName = 'Lagerbestand_${lagerTitel.replaceAll(' ', '_')}.pdf';
 
       if (kIsWeb) {
-        // Im Web direkt den Browser-Dialog zum Speichern/Drucken öffnen
         await Printing.layoutPdf(
           onLayout: (format) async => bytes,
           name: fileName,
         );
       } else {
-        // Auf mobilen Geräten den Teilen-Dialog nutzen
         await Printing.sharePdf(bytes: bytes, filename: fileName);
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('PDF erfolgreich erstellt und heruntergeladen!'),
+          content: Text('PDF erfolgreich erstellt!'),
           backgroundColor: Colors.green,
         ),
       );
@@ -380,7 +440,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
     }
   }
 
-  // --- EXPORT & EMAIL METHODEN (100% Web- & Mobil-sicher) ---
+  // --- EXCEL (.XLSX) EXPORT & MAIL METHODEN ---
   Future<void> _exportAndSend({required bool isPdf}) async {
     final listToExport = _gefilterteArtikel;
     if (listToExport.isEmpty) {
@@ -394,89 +454,22 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
 
     String lagerTitel = _ausgewaehlterLagerort ?? 'Gesamtes Lager';
 
-    // 1. FÜR WEB: Direkt über Printing.layoutPdf ausgeben (umgeht dart:io, path_provider und email_sender komplett)
-    if (kIsWeb) {
-      await Printing.layoutPdf(
-        name: 'Lagerbestand_${lagerTitel.replaceAll(' ', '_')}.pdf',
-        onLayout: (PdfPageFormat format) async {
-          final pdf = pw.Document();
-          pdf.addPage(
-            pw.MultiPage(
-              pageFormat: format,
-              margin: const pw.EdgeInsets.all(32),
-              build: (context) => [
-                pw.Header(
-                  level: 0,
-                  child: pw.Row(
-                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                    children: [
-                      pw.Text(
-                        'Bestellliste / Nachbestellung',
-                        style: pw.TextStyle(
-                          fontSize: 22,
-                          fontWeight: pw.FontWeight.bold,
-                        ),
-                      ),
-                      pw.Text(
-                        'Datum: ${DateTime.now().toLocal().toString().substring(0, 10)}',
-                        style: const pw.TextStyle(fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-                pw.SizedBox(height: 20),
-                pw.Table.fromTextArray(
-                  headerStyle: pw.TextStyle(
-                    fontWeight: pw.FontWeight.bold,
-                    color: PdfColors.white,
-                  ),
-                  headerDecoration: const pw.BoxDecoration(
-                    color: PdfColors.blue800,
-                  ),
-                  headers: [
-                    'Artikel',
-                    'Pakete',
-                    'Inhalt',
-                    'Gesamt',
-                    'Min',
-                    'Lagerort',
-                    'Status',
-                  ],
-                  data: listToExport.map((item) {
-                    final int b = item['bestand'] ?? 0;
-                    final int inhalt = item['inhalt_pro_paket'] ?? 1;
-                    final int m = item['mindestbestand'] ?? 0;
-                    return [
-                      item['title'] ?? '',
-                      b.toString(),
-                      inhalt.toString(),
-                      (b * inhalt).toString(),
-                      m.toString(),
-                      item['lagerorte']?['name'] ?? '-',
-                      b <= m ? 'KRITISCH' : 'OK',
-                    ];
-                  }).toList(),
-                ),
-              ],
-            ),
-          );
-          return pdf.save();
-        },
-      );
+    if (kIsWeb && isPdf) {
+      await _druckeLagerUebersicht();
       return;
     }
 
-    // 2. FÜR MOBILGERÄTE (Android / iOS):
     try {
       final output = await getTemporaryDirectory();
       File file;
 
       if (isPdf) {
+        // PDF Export für Mobil
         final pdf = pw.Document();
         pdf.addPage(
           pw.MultiPage(
-            pageFormat: PdfPageFormat.a4,
-            margin: const pw.EdgeInsets.all(32),
+            pageFormat: PdfPageFormat.a4.landscape,
+            margin: const pw.EdgeInsets.all(20),
             build: (context) => [
               pw.Header(
                 level: 0,
@@ -484,25 +477,27 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
                     pw.Text(
-                      'Bestellliste / Nachbestellung',
+                      'Lagerbestand - $lagerTitel',
                       style: pw.TextStyle(
-                        fontSize: 22,
+                        fontSize: 16,
                         fontWeight: pw.FontWeight.bold,
                       ),
                     ),
                     pw.Text(
                       'Datum: ${DateTime.now().toLocal().toString().substring(0, 10)}',
-                      style: const pw.TextStyle(fontSize: 12),
+                      style: const pw.TextStyle(fontSize: 9),
                     ),
                   ],
                 ),
               ),
-              pw.SizedBox(height: 20),
+              pw.SizedBox(height: 10),
               pw.Table.fromTextArray(
                 headerStyle: pw.TextStyle(
                   fontWeight: pw.FontWeight.bold,
                   color: PdfColors.white,
+                  fontSize: 9,
                 ),
+                cellStyle: const pw.TextStyle(fontSize: 9),
                 headerDecoration: const pw.BoxDecoration(
                   color: PdfColors.blue800,
                 ),
@@ -513,6 +508,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                   'Gesamt',
                   'Min',
                   'Lagerort',
+                  'Zulieferer',
                   'Status',
                 ],
                 data: listToExport.map((item) {
@@ -526,7 +522,8 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                     (b * inhalt).toString(),
                     m.toString(),
                     item['lagerorte']?['name'] ?? '-',
-                    b <= m ? 'KRITISCH' : 'OK',
+                    item['zulieferer'] ?? '-',
+                    b <= m ? 'NACHBESTELLEN' : 'OK',
                   ];
                 }).toList(),
               ),
@@ -538,45 +535,53 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
         );
         await file.writeAsBytes(await pdf.save());
       } else {
-        List<List<dynamic>> rows = [
-          [
-            'Titel',
-            'Pakete',
-            'Inhalt_pro_Paket',
-            'Gesamtmenge',
-            'Mindestbestand',
-            'Lagerort',
-            'Barcode',
-            'Status',
-          ],
-        ];
+        // Echter Excel (.xlsx) Export
+        var excel = excel_lib.Excel.createExcel();
+        excel_lib.Sheet sheetObject = excel['Lagerbestand'];
+        excel.setDefaultSheet('Lagerbestand');
+
+        // Header hinzufügen
+        sheetObject.appendRow([
+          excel_lib.TextCellValue('Titel'),
+          excel_lib.TextCellValue('Pakete'),
+          excel_lib.TextCellValue('Inhalt pro Paket'),
+          excel_lib.TextCellValue('Gesamtmenge'),
+          excel_lib.TextCellValue('Mindestbestand'),
+          excel_lib.TextCellValue('Lagerort'),
+          excel_lib.TextCellValue('Zulieferer'),
+          excel_lib.TextCellValue('Barcode'),
+          excel_lib.TextCellValue('Status'),
+        ]);
+
         for (var item in listToExport) {
           final int b = item['bestand'] ?? 0;
           final int inhalt = item['inhalt_pro_paket'] ?? 1;
           final int m = item['mindestbestand'] ?? 0;
-          rows.add([
-            item['title'] ?? '',
-            b,
-            inhalt,
-            b * inhalt,
-            m,
-            item['lagerorte']?['name'] ?? '',
-            item['barcode'] ?? '',
-            b <= m ? 'KRITISCH' : 'OK',
+          sheetObject.appendRow([
+            excel_lib.TextCellValue(item['title'] ?? ''),
+            excel_lib.IntCellValue(b),
+            excel_lib.IntCellValue(inhalt),
+            excel_lib.IntCellValue(b * inhalt),
+            excel_lib.IntCellValue(m),
+            excel_lib.TextCellValue(item['lagerorte']?['name'] ?? ''),
+            excel_lib.TextCellValue(item['zulieferer'] ?? ''),
+            excel_lib.TextCellValue(item['barcode'] ?? ''),
+            excel_lib.TextCellValue(b <= m ? 'NACHBESTELLEN' : 'OK'),
           ]);
         }
-        String csvData = const ListToCsvConverter().convert(rows);
+
+        final fileBytes = excel.encode();
         file = File(
-          '${output.path}/lagerbestand_${DateTime.now().millisecondsSinceEpoch}.csv',
+          '${output.path}/lagerbestand_${DateTime.now().millisecondsSinceEpoch}.xlsx',
         );
-        await file.writeAsString(csvData);
+        await file.writeAsBytes(fileBytes!);
       }
 
       final Email email = Email(
         body:
-            'Hallo Thomas,\n\nanbei befindet sich die aktuelle Bestandsliste (${isPdf ? "PDF" : "CSV"}).\n\nViele Grüße',
+            'Hallo Thomas,\n\nanbei befindet sich die aktuelle Bestandsliste (${isPdf ? "PDF" : "Excel"}).\n\nViele Grüße',
         subject:
-            'Nachbestellung / Bestandsliste (${isPdf ? "PDF" : "CSV"}) - ${DateTime.now().toString().substring(0, 10)}',
+            'Nachbestellung / Bestandsliste (${isPdf ? "PDF" : "Excel"}) - ${DateTime.now().toString().substring(0, 10)}',
         recipients: [_einkaufEmail],
         attachmentPaths: [file.path],
         isHTML: false,
@@ -642,6 +647,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
         artikel: artikel,
         isCopy: isCopy,
         lagerorte: _lagerorteList,
+        zuliefererListe: _zuliefererList,
         onSaved: _loadData,
       ),
     );
@@ -663,7 +669,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Lager'),
+        title: const Text('Lagerbestand'), // Geändert in Lagerbestand
         actions: [
           IconButton(
             icon: const Icon(Icons.print),
@@ -685,7 +691,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
             icon: const Icon(Icons.share),
             onSelected: (val) {
               if (val == 'pdf') _exportAndSend(isPdf: true);
-              if (val == 'csv') _exportAndSend(isPdf: false);
+              if (val == 'excel') _exportAndSend(isPdf: false);
             },
             itemBuilder: (context) => [
               const PopupMenuItem(
@@ -693,8 +699,8 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                 child: Text('Als PDF an Einkauf senden'),
               ),
               const PopupMenuItem(
-                value: 'csv',
-                child: Text('Als CSV an Einkauf senden'),
+                value: 'excel',
+                child: Text('Als Excel (XLSX) an Einkauf senden'),
               ),
             ],
           ),
@@ -717,7 +723,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                       Image.asset('assets/logo.png', height: 55),
                       const SizedBox(width: 12),
                       const Text(
-                        'Lager',
+                        'Lagerbestand', // Geändert in Lagerbestand
                         style: TextStyle(
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
@@ -740,38 +746,68 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                         onChanged: (val) => setState(() => _searchQuery = val),
                       ),
                       const SizedBox(height: 8),
-                      DropdownButtonFormField<String?>(
-                        value: _ausgewaehlterLagerort,
-                        decoration: const InputDecoration(
-                          labelText: 'Nach Lagerort filtern',
-                          border: OutlineInputBorder(),
-                          contentPadding: EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 8,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: DropdownButtonFormField<String?>(
+                              value: _ausgewaehlterLagerort,
+                              decoration: const InputDecoration(
+                                labelText: 'Nach Lagerort filtern',
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                              ),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('Alle Lagerorte'),
+                                ),
+                                ..._lagerorteList.map((ort) {
+                                  final String ortsName = (ort is Map)
+                                      ? (ort['name']?.toString() ?? '')
+                                      : ort.toString();
+                                  return DropdownMenuItem<String?>(
+                                    value: ortsName,
+                                    child: Text(ortsName),
+                                  );
+                                }),
+                              ],
+                              onChanged: (val) =>
+                                  setState(() => _ausgewaehlterLagerort = val),
+                            ),
                           ),
-                        ),
-                        items: [
-                          const DropdownMenuItem<String?>(
-                            value: null,
-                            child: Text('Alle Lagerorte anzeigen'),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: DropdownButtonFormField<String?>(
+                              value: _ausgewaehlterZulieferer,
+                              decoration: const InputDecoration(
+                                labelText: 'Nach Zulieferer filtern',
+                                border: OutlineInputBorder(),
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 8,
+                                ),
+                              ),
+                              items: [
+                                const DropdownMenuItem<String?>(
+                                  value: null,
+                                  child: Text('Alle Zulieferer'),
+                                ),
+                                ..._zuliefererList.map((zulieferer) {
+                                  return DropdownMenuItem<String?>(
+                                    value: zulieferer,
+                                    child: Text(zulieferer),
+                                  );
+                                }),
+                              ],
+                              onChanged: (val) => setState(
+                                () => _ausgewaehlterZulieferer = val,
+                              ),
+                            ),
                           ),
-                          ..._lagerorteList.map((ort) {
-                            final String ortsName = (ort is Map)
-                                ? (ort['name']?.toString() ??
-                                      ort['lagerorte']?.toString() ??
-                                      '')
-                                : ort.toString();
-                            return DropdownMenuItem<String?>(
-                              value: ortsName,
-                              child: Text(ortsName),
-                            );
-                          }),
                         ],
-                        onChanged: (val) {
-                          setState(() {
-                            _ausgewaehlterLagerort = val;
-                          });
-                        },
                       ),
                       const SizedBox(height: 8),
                       FilterChip(
@@ -803,6 +839,8 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                             final bool istWarnung = pakete <= mindestbestand;
                             final String lagerortName =
                                 item['lagerorte']?['name'] ?? 'Kein Lagerort';
+                            final String zuliefererName =
+                                item['zulieferer'] ?? 'Kein Zulieferer';
 
                             return Card(
                               margin: const EdgeInsets.symmetric(
@@ -842,7 +880,7 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                                           ),
                                           const SizedBox(height: 2),
                                           Text(
-                                            'Lagerort: $lagerortName\nPakete: $pakete | Inhalt: $inhaltProPaket Stk. ➔ Gesamt: $gesamtMenge Stk.',
+                                            'Lagerort: $lagerortName | Zulieferer: $zuliefererName\nPakete: $pakete | Inhalt: $inhaltProPaket Stk. ➔ Gesamt: $gesamtMenge Stk.',
                                             style: TextStyle(
                                               fontSize: 12,
                                               color: Colors.grey.shade700,
@@ -862,10 +900,11 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                                           icon: const Icon(
                                             Icons.history,
                                             size: 20,
-                                            color: Colors.grey,
                                           ),
-                                          onPressed: () =>
-                                              _openHistorieModal(item),
+                                          onPressed: () {
+                                            // Falls Sie hier eine Historie anzeigen möchten,
+                                            // können Sie hier Ihren Aufruf einfügen oder vorerst leer lassen:
+                                          },
                                           tooltip: 'Historie',
                                         ),
                                         IconButton(
@@ -875,14 +914,17 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                                           ),
                                           icon: const Icon(
                                             Icons.copy,
-                                            size: 18,
-                                            color: Colors.orange,
+                                            size: 20,
                                           ),
-                                          onPressed: () => _openArtikelForm(
-                                            artikel: item,
-                                            isCopy: true,
-                                          ),
-                                          tooltip: 'Artikel kopieren',
+                                          onPressed: () {
+                                            final neuerArtikel =
+                                                Map<String, dynamic>.from(item);
+                                            neuerArtikel.remove('id');
+                                            _openArtikelForm(
+                                              artikel: neuerArtikel,
+                                            );
+                                          },
+                                          tooltip: 'Duplizieren',
                                         ),
                                         IconButton(
                                           constraints: const BoxConstraints(),
@@ -891,25 +933,24 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                                           ),
                                           icon: const Icon(
                                             Icons.remove_circle_outline,
-                                            size: 22,
+                                            size: 20,
                                           ),
-                                          onPressed: () =>
-                                              _changeBestand(item, pakete - 1),
-                                        ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 6,
-                                          ),
-                                          child: Text(
-                                            '$pakete Pkg',
-                                            style: TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.bold,
-                                              color: istWarnung
-                                                  ? Colors.red
-                                                  : Colors.black,
-                                            ),
-                                          ),
+                                          onPressed: () {
+                                            final int aktuellerBestand =
+                                                item['bestand'] ?? 0;
+                                            final int inhaltProPaket =
+                                                item['inhalt_pro_paket'] ?? 1;
+                                            final int neuerBestand =
+                                                aktuellerBestand -
+                                                inhaltProPaket;
+                                            _changeBestand(
+                                              item,
+                                              neuerBestand < 0
+                                                  ? 0
+                                                  : neuerBestand,
+                                            );
+                                          },
+                                          tooltip: 'Bestand verringern',
                                         ),
                                         IconButton(
                                           constraints: const BoxConstraints(),
@@ -918,10 +959,19 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                                           ),
                                           icon: const Icon(
                                             Icons.add_circle_outline,
-                                            size: 22,
+                                            size: 20,
                                           ),
-                                          onPressed: () =>
-                                              _changeBestand(item, pakete + 1),
+                                          onPressed: () {
+                                            final int aktuellerBestand =
+                                                item['bestand'] ?? 0;
+                                            final int inhaltProPaket =
+                                                item['inhalt_pro_paket'] ?? 1;
+                                            final int neuerBestand =
+                                                aktuellerBestand +
+                                                inhaltProPaket;
+                                            _changeBestand(item, neuerBestand);
+                                          },
+                                          tooltip: 'Bestand erhöhen',
                                         ),
                                         IconButton(
                                           constraints: const BoxConstraints(),
@@ -931,11 +981,24 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
                                           icon: const Icon(
                                             Icons.edit,
                                             size: 20,
-                                            color: Colors.blue,
                                           ),
                                           onPressed: () =>
                                               _openArtikelForm(artikel: item),
                                           tooltip: 'Bearbeiten',
+                                        ),
+                                        IconButton(
+                                          constraints: const BoxConstraints(),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 4,
+                                          ),
+                                          icon: const Icon(
+                                            Icons.delete,
+                                            size: 20,
+                                            color: Colors.red,
+                                          ),
+                                          onPressed: () =>
+                                              _loescheArtikel(item),
+                                          tooltip: 'Artikel löschen',
                                         ),
                                       ],
                                     ),
@@ -961,6 +1024,7 @@ class ArtikelFormModal extends StatefulWidget {
   final Map<String, dynamic>? artikel;
   final bool isCopy;
   final List lagerorte;
+  final List<String> zuliefererListe;
   final VoidCallback onSaved;
 
   const ArtikelFormModal({
@@ -968,6 +1032,7 @@ class ArtikelFormModal extends StatefulWidget {
     this.artikel,
     this.isCopy = false,
     required this.lagerorte,
+    required this.zuliefererListe,
     required this.onSaved,
   });
 
@@ -982,6 +1047,7 @@ class _ArtikelFormModalState extends State<ArtikelFormModal> {
   late TextEditingController _inhaltController;
   late TextEditingController _mindestbestandController;
   late TextEditingController _barcodeController;
+  late TextEditingController _zuliefererController;
   String? _selectedLagerortId;
   bool _isSaving = false;
 
@@ -1006,6 +1072,7 @@ class _ArtikelFormModalState extends State<ArtikelFormModal> {
     _barcodeController = TextEditingController(
       text: widget.isCopy ? '' : (a?['barcode'] ?? ''),
     );
+    _zuliefererController = TextEditingController(text: a?['zulieferer'] ?? '');
     _selectedLagerortId = a?['lagerort_id'];
   }
 
@@ -1018,6 +1085,7 @@ class _ArtikelFormModalState extends State<ArtikelFormModal> {
     final int inhaltProPaket = int.parse(_inhaltController.text);
     final int mindestbestand = int.parse(_mindestbestandController.text);
     final String barcode = _barcodeController.text.trim();
+    final String zulieferer = _zuliefererController.text.trim();
 
     try {
       if (widget.artikel == null || widget.isCopy) {
@@ -1030,6 +1098,7 @@ class _ArtikelFormModalState extends State<ArtikelFormModal> {
               'mindestbestand': mindestbestand,
               'barcode': barcode.isNotEmpty ? barcode : null,
               'lagerort_id': _selectedLagerortId,
+              'zulieferer': zulieferer.isNotEmpty ? zulieferer : null,
             })
             .select()
             .single();
@@ -1056,6 +1125,7 @@ class _ArtikelFormModalState extends State<ArtikelFormModal> {
               'mindestbestand': mindestbestand,
               'barcode': barcode.isNotEmpty ? barcode : null,
               'lagerort_id': _selectedLagerortId,
+              'zulieferer': zulieferer.isNotEmpty ? zulieferer : null,
             })
             .eq('id', artikelId);
 
@@ -1178,6 +1248,40 @@ class _ArtikelFormModalState extends State<ArtikelFormModal> {
                   );
                 }).toList(),
                 onChanged: (val) => setState(() => _selectedLagerortId = val),
+              ),
+              const SizedBox(height: 12),
+              Autocomplete<String>(
+                optionsBuilder: (TextEditingValue textEditingValue) {
+                  if (textEditingValue.text.isEmpty) {
+                    return widget.zuliefererListe;
+                  }
+                  return widget.zuliefererListe.where((String option) {
+                    return option.toLowerCase().contains(
+                      textEditingValue.text.toLowerCase(),
+                    );
+                  });
+                },
+                onSelected: (String selection) {
+                  _zuliefererController.text = selection;
+                },
+                fieldViewBuilder:
+                    (context, controller, focusNode, onEditingComplete) {
+                      // Synchronisiere initialen Text wenn nötig
+                      if (controller.text.isEmpty &&
+                          _zuliefererController.text.isNotEmpty) {
+                        controller.text = _zuliefererController.text;
+                      }
+                      return TextFormField(
+                        controller: controller,
+                        focusNode: focusNode,
+                        onEditingComplete: onEditingComplete,
+                        onChanged: (val) => _zuliefererController.text = val,
+                        decoration: const InputDecoration(
+                          labelText: 'Zulieferer',
+                          border: OutlineInputBorder(),
+                        ),
+                      );
+                    },
               ),
               const SizedBox(height: 12),
               TextFormField(
