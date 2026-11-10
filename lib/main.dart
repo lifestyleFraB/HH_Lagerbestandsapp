@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:printing/printing.dart';
 import 'package:flutter/foundation.dart';
 import 'package:excel/excel.dart' as excel_lib;
+import 'package:universal_html/html.dart' as html;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -460,6 +461,77 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
     }
 
     try {
+      List<int>? excelBytes;
+      if (!isPdf) {
+        final excel = excel_lib.Excel.createExcel();
+        final sheetObject = excel['Lagerbestand'];
+        excel.setDefaultSheet('Lagerbestand');
+
+        sheetObject.appendRow([
+          excel_lib.TextCellValue('Titel'),
+          excel_lib.TextCellValue('Pakete'),
+          excel_lib.TextCellValue('Inhalt pro Paket'),
+          excel_lib.TextCellValue('Gesamtmenge'),
+          excel_lib.TextCellValue('Mindestbestand'),
+          excel_lib.TextCellValue('Lagerort'),
+          excel_lib.TextCellValue('Zulieferer'),
+          excel_lib.TextCellValue('Barcode'),
+          excel_lib.TextCellValue('Status'),
+        ]);
+
+        for (var item in listToExport) {
+          final int bestand = item['bestand'] ?? 0;
+          final int inhalt = item['inhalt_pro_paket'] ?? 1;
+          final int mindestbestand = item['mindestbestand'] ?? 0;
+          sheetObject.appendRow([
+            excel_lib.TextCellValue(item['title'] ?? ''),
+            excel_lib.IntCellValue(bestand),
+            excel_lib.IntCellValue(inhalt),
+            excel_lib.IntCellValue(bestand * inhalt),
+            excel_lib.IntCellValue(mindestbestand),
+            excel_lib.TextCellValue(item['lagerorte']?['name'] ?? ''),
+            excel_lib.TextCellValue(item['zulieferer'] ?? ''),
+            excel_lib.TextCellValue(item['barcode'] ?? ''),
+            excel_lib.TextCellValue(
+              bestand <= mindestbestand ? 'NACHBESTELLEN' : 'OK',
+            ),
+          ]);
+        }
+
+        excelBytes = excel.encode();
+        if (excelBytes == null) {
+          throw StateError('Die Excel-Datei konnte nicht erstellt werden.');
+        }
+
+        if (kIsWeb) {
+          final fileName =
+              'lagerbestand_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+          final blob = html.Blob(
+            [excelBytes],
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          );
+          final objectUrl = html.Url.createObjectUrlFromBlob(blob);
+          final anchor = html.AnchorElement(href: objectUrl)
+            ..download = fileName
+            ..style.display = 'none';
+          html.document.body?.children.add(anchor);
+          anchor.click();
+          anchor.remove();
+          Future<void>.delayed(
+            const Duration(seconds: 1),
+            () => html.Url.revokeObjectUrl(objectUrl),
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Excel-Datei wurde heruntergeladen.'),
+              ),
+            );
+          }
+          return;
+        }
+      }
+
       final output = await getTemporaryDirectory();
       File file;
 
@@ -535,46 +607,10 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
         );
         await file.writeAsBytes(await pdf.save());
       } else {
-        // Echter Excel (.xlsx) Export
-        var excel = excel_lib.Excel.createExcel();
-        excel_lib.Sheet sheetObject = excel['Lagerbestand'];
-        excel.setDefaultSheet('Lagerbestand');
-
-        // Header hinzufügen
-        sheetObject.appendRow([
-          excel_lib.TextCellValue('Titel'),
-          excel_lib.TextCellValue('Pakete'),
-          excel_lib.TextCellValue('Inhalt pro Paket'),
-          excel_lib.TextCellValue('Gesamtmenge'),
-          excel_lib.TextCellValue('Mindestbestand'),
-          excel_lib.TextCellValue('Lagerort'),
-          excel_lib.TextCellValue('Zulieferer'),
-          excel_lib.TextCellValue('Barcode'),
-          excel_lib.TextCellValue('Status'),
-        ]);
-
-        for (var item in listToExport) {
-          final int b = item['bestand'] ?? 0;
-          final int inhalt = item['inhalt_pro_paket'] ?? 1;
-          final int m = item['mindestbestand'] ?? 0;
-          sheetObject.appendRow([
-            excel_lib.TextCellValue(item['title'] ?? ''),
-            excel_lib.IntCellValue(b),
-            excel_lib.IntCellValue(inhalt),
-            excel_lib.IntCellValue(b * inhalt),
-            excel_lib.IntCellValue(m),
-            excel_lib.TextCellValue(item['lagerorte']?['name'] ?? ''),
-            excel_lib.TextCellValue(item['zulieferer'] ?? ''),
-            excel_lib.TextCellValue(item['barcode'] ?? ''),
-            excel_lib.TextCellValue(b <= m ? 'NACHBESTELLEN' : 'OK'),
-          ]);
-        }
-
-        final fileBytes = excel.encode();
         file = File(
           '${output.path}/lagerbestand_${DateTime.now().millisecondsSinceEpoch}.xlsx',
         );
-        await file.writeAsBytes(fileBytes!);
+        await file.writeAsBytes(excelBytes!);
       }
 
       final Email email = Email(
@@ -669,7 +705,20 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Lagerbestand'), // Geändert in Lagerbestand
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Image.asset(
+              'assets/logo.png',
+              height: 36,
+              width: 90,
+              fit: BoxFit.contain,
+              semanticLabel: 'Firmenlogo Hagemann & Henrichsmann',
+            ),
+            const SizedBox(width: 8),
+            const Text('Lagerbestand'),
+          ],
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.print),
@@ -700,7 +749,11 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
               ),
               const PopupMenuItem(
                 value: 'excel',
-                child: Text('Als Excel (XLSX) an Einkauf senden'),
+                child: Text(
+                  kIsWeb
+                      ? 'Als Excel (XLSX) herunterladen'
+                      : 'Als Excel (XLSX) an Einkauf senden',
+                ),
               ),
             ],
           ),
@@ -710,29 +763,6 @@ class _ArtikelUebersichtPageState extends State<ArtikelUebersichtPage> {
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16.0,
-                    vertical: 12.0,
-                  ),
-                  color: const Color(0xFFD3D3D3),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Image.asset('assets/logo.png', height: 55),
-                      const SizedBox(width: 12),
-                      const Text(
-                        'Lagerbestand', // Geändert in Lagerbestand
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
                 Padding(
                   padding: const EdgeInsets.all(12.0),
                   child: Column(
